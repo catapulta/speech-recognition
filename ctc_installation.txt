@@ -1,0 +1,42 @@
+#! /bin/bash#-----------------------------------
+# CTC
+#-----------------------------------
+
+sudo mkdir /data
+sudo mount /dev/xvdf /data
+
+# increase shared memory
+sudo chmod 777 /etc/fstab
+echo tmpfs /dev/shm tmpfs defaults,size=200g 0 0 > /etc/fstab
+sudo mount -o remount /dev/shm
+cat /etc/fstab
+
+# set CUDA_HOME env variable
+nvcc --version
+export CUDA_HOME=/usr/local/cuda-9.0
+
+source activate pytorch_p36
+sudo pip install --upgrade pip
+
+# Decoder
+mkdir ~/ctc && cd ~/ctc
+git clone --recursive https://github.com/parlance/ctcdecode.git
+cd ~/ctc/ctcdecode
+sudo pip install wget
+wget https://github.com/cmudeeplearning11785/machine_learning_gpu/blob/master/boost_1_63_0.tar.gz
+cp boost_1_63_0.tar.gz ~/ctc/ctcdecode/third_party/
+pip install .
+
+# Warp-CTC
+cd ~/ctc
+git clone https://github.com/SeanNaren/warp-ctc.git
+cd warp-ctc
+mkdir build; cd build
+cmake ..
+make
+cd ../pytorch_binding
+python setup.py install
+
+pip install python-Levenshtein
+cd /data/speech-recognition/
+pip install tensorflow
