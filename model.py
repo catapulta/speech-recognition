@@ -15,37 +15,45 @@ class UtteranceModel(nn.Module):
         self.num_phonema = num_phonema
         self.bidirectional = bidirectional
         self.directions = 2 if bidirectional else 1
-        # self.lstm_input_size = 320
-        self.lstm_input_size = 40
-        self.hidden_size = 256
-        self.nlayers = 3
-        # self.cnn = nn.Sequential(
-        #     nn.Conv2d(1, 16, kernel_size=3, stride=(1, 2), padding=(1, 1), bias=False),
-        #     nn.BatchNorm2d(16),
-        #     nn.ELU(),
-        #     nn.Conv2d(16, 32, kernel_size=3, stride=(1, 1), padding=(1, 1), bias=False),
-        #     nn.BatchNorm2d(32),
-        #     nn.ELU(),
-        #     nn.Conv2d(32, 64, kernel_size=3, stride=(2, 2), padding=(1, 1), bias=False),
-        #     nn.ELU(),
-        #     nn.Conv2d(64, 32, kernel_size=3, stride=(1, 1), padding=(1, 1), bias=False),
-        #     nn.BatchNorm2d(32),
-        #     nn.ELU()
-        # )
-        self.rnn = nn.LSTM(input_size=self.lstm_input_size,
-                           hidden_size=self.hidden_size,
-                           num_layers=self.nlayers,
-                           bidirectional=self.bidirectional)
+        self.rnn_input_size = 320
+        self.hidden_size = 250
+        self.nlayers = 4
+        self.cnn = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, stride=(1, 2), padding=(1, 1), bias=False),
+            nn.BatchNorm2d(16),
+            nn.ELU(),
+            nn.Conv2d(16, 32, kernel_size=3, stride=(1, 1), padding=(1, 1), bias=False),
+            nn.BatchNorm2d(32),
+            nn.ELU(),
+            nn.Conv2d(32, 64, kernel_size=3, stride=(2, 2), padding=(1, 1), bias=False),
+            nn.ELU(),
+            nn.Conv2d(64, 32, kernel_size=3, stride=(1, 1), padding=(1, 1), bias=False),
+            nn.BatchNorm2d(32),
+            nn.ELU()
+        )
+        self.rnn = nn.GRU(input_size=self.rnn_input_size,
+                          hidden_size=self.hidden_size,
+                          num_layers=self.nlayers,
+                          bidirectional=self.bidirectional,
+                          dropout=.1)
 
         # define initial state
-        self.init_hidden = torch.nn.Parameter(
-                torch.randn(self.nlayers * self.directions, 1, self.hidden_size),
-                requires_grad=True)  # num_layers * num_directions, 1, hidden_size
-        self.init_cell = torch.nn.Parameter(
-                torch.randn(self.nlayers * self.directions, 1, self.hidden_size),
-                requires_grad=True)  # num_layers * num_directions, 1, hidden_size
+        # self.init_hidden = torch.zeros(self.nlayers * self.directions, 1, self.hidden_size).type(torch.FloatTensor)
+        # self.init_hidden = self.init_hidden.cuda() if torch.cuda.is_available() else self.init_hidden
+        # self.init_hidden = torch.nn.Parameter(self.init_hidden, requires_grad=True)  # num_layers * num_directions, 1, hidden_size
+        # self.init_cell = torch.zeros(self.nlayers * self.directions, 1, self.hidden_size).type(torch.FloatTensor)
+        # self.init_cell = self.init_hidden.cuda() if torch.cuda.is_available() else self.init_hidden
+        # self.init_cell = torch.nn.Parameter(self.init_cell, requires_grad=True)  # num_layers * num_directions, 1, hidden_size
 
-        self.scoring = nn.Linear(self.hidden_size * 2 if self.bidirectional else self.hidden_size, self.num_phonema)
+        hidden_size = self.hidden_size * 2 if self.bidirectional else self.hidden_size
+        self.scoring = nn.Sequential(
+            nn.Sigmoid(),
+            nn.BatchNorm1d(hidden_size),
+            nn.Linear(hidden_size, self.hidden_size),
+            nn.Sigmoid(),
+            nn.BatchNorm1d(self.hidden_size),
+            nn.Linear(self.hidden_size, self.num_phonema)
+        )
 
         # initialize
         for m in self.modules():
@@ -62,34 +70,104 @@ class UtteranceModel(nn.Module):
         '''
         batch_size = len(seq_list)
         lens = [len(s) for s in seq_list]  # lens of all inputs (sorted by loader)
-        # seq_list = rnn.pad_sequence(seq_list, batch_first=True)  # batch_size, max_len, features
-        # seq_list = seq_list.cuda() if torch.cuda.is_available() else seq_list
-        # seq_list = seq_list.unsqueeze(1)  # create a channel for CNN: batch_size, 1, max_len, features
-        # embedding = self.cnn(seq_list)  # wasteful cnn computes over padded data: batch_size, 1, red_max_len, features
-        # n, c, h, w = embedding.size()  # h is (CNN reduced) max_len; w * c are features
-        # reduced_embeddings = []  # batch_size, |reduced_lens|, features
-        # reduced_lens = []
-        # for i in range(batch_size):
-        #     l = -(-lens[i] // self.cnn_compression)
-        #     e = embedding[i, :, :l, :].permute(0, 2, 1).contiguous().view(c * w, l).permute(1, 0)  # seq_len, features
-        #     reduced_embeddings.append(e)
-        #     reduced_lens.append(l)
+        seq_list = rnn.pad_sequence(seq_list, batch_first=True)  # batch_size, max_len, features
+        seq_list = seq_list.cuda() if torch.cuda.is_available() else seq_list
+        seq_list = seq_list.unsqueeze(1)  # create a channel for CNN: batch_size, 1, max_len, features
+        embedding = self.cnn(seq_list)  # wasteful cnn computes over padded data: batch_size, 1, red_max_len, features
+        n, c, h, w = embedding.size()  # h is (CNN reduced) max_len; w * c are features
+        reduced_embeddings = []  # batch_size, |reduced_lens|, features
+        reduced_lens = []
+        for i in range(batch_size):
+            l = -(-lens[i] // self.cnn_compression)
+            e = embedding[i, :, :l, :].permute(0, 2, 1).contiguous().view(c * w, l).permute(1, 0)  # seq_len, features
+            reduced_embeddings.append(e)
+            reduced_lens.append(l)
+        # reduced_embeddings = seq_list
+        # reduced_lens = lens
+        packed_input = rnn.pack_sequence(reduced_embeddings)  # packed uneven length sequences for fast RNN processing
+        packed_input = packed_input.cuda() if torch.cuda.is_available() else packed_input
+        # learn initial state
+        # init_hidden = self.init_hidden.expand(self.nlayers * self.directions, batch_size, self.hidden_size).contiguous()
+        # init_hidden.requires_grad_(True)
+        # init_cell = self.init_cell.expand(self.nlayers * self.directions, batch_size, self.hidden_size).contiguous()
+        # init_cell.requires_grad_(True)
+        packed_output, hidden = self.rnn(packed_input, None)  # (init_hidden, init_cell))
+        packed_output, _ = rnn.pad_packed_sequence(packed_output)  # unpacked output (padded)
+        output_flatten = torch.cat(
+            [packed_output[:reduced_lens[i], i] for i in
+             range(batch_size)])  # concatenated output (sum(reduced_lens), hidden)
+        scores_flatten = self.scoring(output_flatten)  # concatenated scores (sum(reduced_lens), num_phonema)
+        cum_lens = np.cumsum([0] + reduced_lens)
+        scores_unflatten = [scores_flatten[cum_lens[i]:cum_lens[i + 1]] for i in range(batch_size)]
+        scores_unflatten = rnn.pad_sequence(scores_unflatten)  # max_len, batch, num_phonema
+        return scores_unflatten, hidden, reduced_lens  # return concatenated scores, hidden state, length of seqs
+
+# Model that takes packed sequences in training
+class BaseModel(nn.Module):
+    def __init__(self, num_phonema, cnn_compression=1, bidirectional=True):
+        super(BaseModel, self).__init__()
+        self.cnn_compression = cnn_compression
+        self.num_phonema = num_phonema
+        self.bidirectional = bidirectional
+        self.directions = 2 if bidirectional else 1
+        self.rnn_input_size = 40
+        self.hidden_size = 500
+        self.nlayers = 4
+        self.rnn = nn.LSTM(input_size=self.rnn_input_size,
+                          hidden_size=self.hidden_size,
+                          num_layers=self.nlayers,
+                          bidirectional=self.bidirectional)
+
+        # define initial state
+        # self.init_hidden = torch.zeros(self.nlayers * self.directions, 1, self.hidden_size).type(torch.FloatTensor)
+        # self.init_hidden = self.init_hidden.cuda() if torch.cuda.is_available() else self.init_hidden
+        # self.init_hidden = torch.nn.Parameter(self.init_hidden, requires_grad=True)  # num_layers * num_directions, 1, hidden_size
+        # self.init_cell = torch.zeros(self.nlayers * self.directions, 1, self.hidden_size).type(torch.FloatTensor)
+        # self.init_cell = self.init_hidden.cuda() if torch.cuda.is_available() else self.init_hidden
+        # self.init_cell = torch.nn.Parameter(self.init_cell, requires_grad=True)  # num_layers * num_directions, 1, hidden_size
+
+        hidden_size = self.hidden_size * 2 if self.bidirectional else self.hidden_size
+        self.scoring = nn.Sequential(
+            nn.Sigmoid(),
+            nn.BatchNorm1d(hidden_size),
+            nn.Linear(hidden_size, self.hidden_size),
+            nn.Sigmoid(),
+            nn.BatchNorm1d(self.hidden_size),
+            nn.Linear(self.hidden_size, self.num_phonema)
+        )
+
+        # initialize
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, seq_list):
+        '''
+        :param seq_list: list of sequences ordered by size
+        :return: scores (sum(seq_lens), num_phonema)
+        '''
+        batch_size = len(seq_list)
+        lens = [len(s) for s in seq_list]  # lens of all inputs (sorted by loader)
         reduced_embeddings = seq_list
         reduced_lens = lens
         packed_input = rnn.pack_sequence(reduced_embeddings)  # packed uneven length sequences for fast RNN processing
         packed_input = packed_input.cuda() if torch.cuda.is_available() else packed_input
         # learn initial state
-        self.init_hidden.data = self.init_hidden.data.expand(self.nlayers * self.directions, batch_size, self.hidden_size)
-        self.init_cell.data = self.init_cell.data.expand(self.nlayers * self.directions, batch_size, self.hidden_size)
-        packed_output, hidden = self.rnn(packed_input, (self.init_hidden, self.init_cell))
+        # init_hidden = self.init_hidden.expand(self.nlayers * self.directions, batch_size, self.hidden_size).contiguous()
+        # init_hidden.requires_grad_(True)
+        # init_cell = self.init_cell.expand(self.nlayers * self.directions, batch_size, self.hidden_size).contiguous()
+        # init_cell.requires_grad_(True)
+        packed_output, hidden = self.rnn(packed_input, None)  # (init_hidden, init_cell))
         packed_output, _ = rnn.pad_packed_sequence(packed_output)  # unpacked output (padded)
         output_flatten = torch.cat(
             [packed_output[:reduced_lens[i], i] for i in
              range(batch_size)])  # concatenated output (sum(reduced_lens), hidden)
-        scores_flatten = self.scoring(
-            torch.sigmoid(output_flatten))  # concatenated scores (sum(reduced_lens), num_phonema)
+        scores_flatten = self.scoring(output_flatten)  # concatenated scores (sum(reduced_lens), num_phonema)
         cum_lens = np.cumsum([0] + reduced_lens)
-        scores_unflatten = [scores_flatten[cum_lens[i]:cum_lens[i+1]] for i in range(batch_size)]
+        scores_unflatten = [scores_flatten[cum_lens[i]:cum_lens[i + 1]] for i in range(batch_size)]
         scores_unflatten = rnn.pad_sequence(scores_unflatten)  # max_len, batch, num_phonema
         return scores_unflatten, hidden, reduced_lens  # return concatenated scores, hidden state, length of seqs
 
@@ -180,7 +258,7 @@ if __name__ == '__main__':
     import phoneme_list
     import torchsummary
 
-    model = UtteranceModel(len(phoneme_list.PHONEME_MAP) + 1)
+    model = BaseModel(len(phoneme_list.PHONEME_MAP) + 1, cnn_compression=2)
     with torch.no_grad():
         # torchsummary.summary(model, (1, 2700, 40))
         # max 2700, 630 average,

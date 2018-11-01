@@ -7,7 +7,7 @@ from ctcdecode import CTCBeamDecoder
 import phoneme_list
 import Levenshtein as L
 import logging
-from model import UtteranceModel
+from model import UtteranceModel, BaseModel
 import pdb
 
 torch.multiprocessing.set_sharing_strategy('file_system')
@@ -115,7 +115,7 @@ class LanguageModelTrainer:
         # self.optimizer = torch.optim.SGD(model.parameters(), lr=0.0001, weight_decay=1e-6, momentum=0.9)
         self.criterion = CTCLoss()#size_average=True, length_average=False)
         self.criterion = self.criterion.cuda() if torch.cuda.is_available() else self.criterion
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.1, patience=6)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.1, patience=2)
         self.LD = Levenshtein(phoneme_list.PHONEME_MAP)
         self.best_rate = 1e10
         self.decoder = CTCBeamDecoder(labels=[' '] + phoneme_list.PHONEME_MAP, blank_id=0)
@@ -257,10 +257,10 @@ if __name__ == '__main__':
 
     tLog, vLog = logger.Logger("./logs/train_pytorch"), logger.Logger("./logs/val_pytorch")
 
-    NUM_EPOCHS = 20
+    NUM_EPOCHS = 40
     BATCH_SIZE = 64
 
-    model = UtteranceModel(len(phoneme_list.PHONEME_MAP)+1, cnn_compression=2)
+    model = BaseModel(len(phoneme_list.PHONEME_MAP)+1, cnn_compression=2)
 
     ckpt_path = 'models/checkpoint.pt'
     if os.path.isfile(ckpt_path):
