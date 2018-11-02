@@ -118,7 +118,7 @@ class LanguageModelTrainer:
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.1, patience=2)
         self.LD = Levenshtein(phoneme_list.PHONEME_MAP)
         self.best_rate = 1e10
-        self.decoder = CTCBeamDecoder(labels=[' '] + phoneme_list.PHONEME_MAP, blank_id=0)
+        self.decoder = CTCBeamDecoder(labels=[' '] + phoneme_list.PHONEME_MAP, blank_id=0, beam_width=150)
 
     def train(self):
         self.model.train()  # set to training mode
@@ -260,12 +260,23 @@ if __name__ == '__main__':
     NUM_EPOCHS = 40
     BATCH_SIZE = 64
 
-    model = BaseModel(len(phoneme_list.PHONEME_MAP)+1, cnn_compression=2)
+    model = UtteranceModel(len(phoneme_list.PHONEME_MAP)+1, cnn_compression=2)
+
+    def load_my_state_dict(net, state_dict):
+        own_state = net.state_dict()
+        for name, param in state_dict.items():
+            if name not in own_state:
+                continue
+            if isinstance(param, torch.nn.Parameter):
+                # backwards compatibility for serialized parameters
+                param = param.data
+            own_state[name].copy_(param)
+        return net
 
     ckpt_path = 'models/checkpoint.pt'
     if os.path.isfile(ckpt_path):
         pretrained_dict = torch.load(ckpt_path, map_location=lambda storage, loc: storage)
-        model.load_state_dict(pretrained_dict)
+        model = load_my_state_dict(model, pretrained_dict)
         print('Checkpoint weights loaded.')
 
     utdst = UtteranceDataset(data_path='./data/wsj0_train.npy', label_path='./data/wsj0_train_merged_labels.npy')

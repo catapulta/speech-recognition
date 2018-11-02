@@ -47,11 +47,11 @@ class UtteranceModel(nn.Module):
 
         hidden_size = self.hidden_size * 2 if self.bidirectional else self.hidden_size
         self.scoring = nn.Sequential(
-            nn.Sigmoid(),
             nn.BatchNorm1d(hidden_size),
-            nn.Linear(hidden_size, self.hidden_size),
             nn.Sigmoid(),
+            nn.Linear(hidden_size, self.hidden_size),
             nn.BatchNorm1d(self.hidden_size),
+            nn.Sigmoid(),
             nn.Linear(self.hidden_size, self.num_phonema)
         )
 
@@ -111,8 +111,8 @@ class BaseModel(nn.Module):
         self.bidirectional = bidirectional
         self.directions = 2 if bidirectional else 1
         self.rnn_input_size = 40
-        self.hidden_size = 500
-        self.nlayers = 4
+        self.hidden_size = 420
+        self.nlayers = 3
         self.rnn = nn.LSTM(input_size=self.rnn_input_size,
                           hidden_size=self.hidden_size,
                           num_layers=self.nlayers,
@@ -128,11 +128,11 @@ class BaseModel(nn.Module):
 
         hidden_size = self.hidden_size * 2 if self.bidirectional else self.hidden_size
         self.scoring = nn.Sequential(
-            nn.Sigmoid(),
             nn.BatchNorm1d(hidden_size),
-            nn.Linear(hidden_size, self.hidden_size),
             nn.Sigmoid(),
+            nn.Linear(hidden_size, self.hidden_size),
             nn.BatchNorm1d(self.hidden_size),
+            nn.Sigmoid(),
             nn.Linear(self.hidden_size, self.num_phonema)
         )
 
